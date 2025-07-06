@@ -36,7 +36,7 @@ class EngineStats:
 
 class AnimationEngine:
     """
-    The main LED Animation Playback Engine with proper debugging
+    The main LED Animation Playback Engine
     """
     
     def __init__(self):
@@ -55,6 +55,8 @@ class AnimationEngine:
         self.master_brightness = EngineSettings.ANIMATION.master_brightness
         self.speed_percent = 100
         self.dissolve_time = EngineSettings.ANIMATION.default_dissolve_time
+        
+        self.engine_start_time = time.time()
         
         self.state_callbacks: List[Callable] = []
         self._lock = threading.RLock()
@@ -95,6 +97,8 @@ class AnimationEngine:
         try:
             logger.info("Starting Animation Engine...")
             
+            self.engine_start_time = time.time()
+            
             logger.info("Initializing Scene Manager...")
             await self.scene_manager.initialize()
             
@@ -110,8 +114,7 @@ class AnimationEngine:
             self.running = True
             logger.info(f"Animation Engine started successfully - Target FPS: {EngineSettings.ANIMATION.target_fps}")
             
-            # Load default test scene if no scenes loaded
-            await asyncio.sleep(0.1)  # Give a moment for initialization
+            await asyncio.sleep(0.1)
             if not self.scene_manager.scenes:
                 logger.info("No scenes loaded, attempting to load test.json...")
                 try:
@@ -177,7 +180,7 @@ class AnimationEngine:
     
     def _animation_loop(self):
         """
-        Main animation loop - runs at target FPS
+        Main animation loop - runs at target FPS with proper stats tracking
         """
         self.last_frame_time = time.time()
         frame_count = 0
@@ -196,7 +199,10 @@ class AnimationEngine:
                 
                 frame_count += 1
                 
-                # Calculate FPS every 60 frames (1 second at 60fps)
+                with self._lock:
+                    self.stats.frame_count = frame_count
+                    self.stats.animation_time = time.time() - self.engine_start_time
+                
                 if frame_count % 60 == 0:
                     fps_time_diff = frame_start - fps_calculation_time
                     if fps_time_diff > 0:
@@ -204,8 +210,8 @@ class AnimationEngine:
                         with self._lock:
                             self.stats.actual_fps = actual_fps
                         
-                        if frame_count % 300 == 0:  # Log every 5 seconds
-                            logger.info(f"Animation loop: Frame {frame_count}, FPS: {actual_fps:.1f}, Active LEDs: {self.stats.active_leds}")
+                        if frame_count % 300 == 0: 
+                            logger.info(f"Animation loop: Frame {frame_count}, FPS: {actual_fps:.1f}, Active LEDs: {self.stats.active_leds}, Runtime: {self.stats.animation_time:.1f}s")
                     
                     fps_calculation_time = frame_start
                     self._update_stats()
@@ -215,7 +221,6 @@ class AnimationEngine:
                 import traceback
                 logger.error(f"Traceback: {traceback.format_exc()}")
             
-            # Frame timing
             frame_time = time.time() - frame_start
             sleep_time = max(0, self.frame_interval - frame_time)
             
@@ -232,9 +237,6 @@ class AnimationEngine:
             with self._lock:
                 speed_percent = self.speed_percent
                 master_brightness = self.master_brightness
-                
-                self.stats.frame_count += 1
-                self.stats.animation_time += delta_time
             
             adjusted_delta = delta_time * (speed_percent / 100.0)
             self.scene_manager.update_animation(adjusted_delta)
@@ -292,7 +294,7 @@ class AnimationEngine:
     
     def get_stats(self) -> EngineStats:
         """
-        Get the current statistics
+        Get the current statistics with real-time values
         """
         with self._lock:
             stats_copy = EngineStats()
@@ -301,7 +303,9 @@ class AnimationEngine:
             stats_copy.frame_count = self.stats.frame_count
             stats_copy.active_leds = self.stats.active_leds
             stats_copy.total_leds = self.stats.total_leds
-            stats_copy.animation_time = self.stats.animation_time
+            
+            stats_copy.animation_time = time.time() - self.engine_start_time
+            
             stats_copy.master_brightness = self.stats.master_brightness
             stats_copy.speed_percent = self.stats.speed_percent
             stats_copy.dissolve_time = self.stats.dissolve_time
@@ -325,39 +329,27 @@ class AnimationEngine:
             file_path = str(args[0])
             logger.info(f"Loading JSON from: {file_path}")
             
-            scene_id = 1
-            if len(args) > 1:
-                try:
-                    scene_id = int(args[1])
-                except ValueError:
-                    scene_id = 1
-            
-            start_time = time.time()
-            
             success = False
+            
             try:
                 with self._lock:
-                    success = self.scene_manager.load_scene_from_new_format(file_path, scene_id)
-                    
+                    if "multiple" in file_path.lower() or "scenes" in file_path.lower():
+                        success = self.scene_manager.load_multiple_scenes_from_file(file_path)
+                        
                     if not success:
                         success = self.scene_manager.load_scene_from_file(file_path)
                         
                     if not success:
                         success = self.scene_manager.load_multiple_scenes_from_file(file_path)
-                    
+                        
                     if success:
                         self._notify_state_change()
                         self._log_engine_status()
                         
-                load_time = time.time() - start_time
-                logger.info(f"JSON load completed in {load_time:.3f}s")
-                    
             except Exception as load_error:
                 logger.error(f"Error loading JSON scenes: {load_error}")
                 success = False
             
-            if success:
-                logger.info(f"Scene loaded successfully from: {file_path}")
             else:
                 logger.error(f"Failed to load scene from: {file_path}")
                 
