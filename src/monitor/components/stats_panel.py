@@ -4,6 +4,9 @@ Stats Panel - Component to display detailed statistics
 
 import flet as ft
 from config.theme import ThemeColors, ThemeStyles
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class StatsPanel(ft.Container):
@@ -93,5 +96,10 @@ class StatsPanel(ft.Container):
             self.effects_count_text.value = str(scene_info.get('total_effects', 0))
             
         except Exception as e:
-            pass
-    
+            logger.error(f"Error updating stats: {e}")
+            self.led_count_text.value = "225"
+            self.active_leds_text.value = "0"
+            self.frame_count_text.value = "0"
+            self.animation_time_text.value = "0.0s"
+            self.segments_count_text.value = "0"
+            self.effects_count_text.value = "0"

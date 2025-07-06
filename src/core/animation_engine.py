@@ -1,6 +1,5 @@
 """
 LED Animation Playback Engine
-Core engine for handling animation and LED output.
 """
 
 import asyncio
@@ -22,7 +21,7 @@ logger = get_logger(__name__)
 @dataclass
 class EngineStats:
     """
-    Engine statistics.
+    Engine statistics
     """
     target_fps: int = 60
     actual_fps: float = 0.0
@@ -37,7 +36,7 @@ class EngineStats:
 
 class AnimationEngine:
     """
-    The main LED Animation Playback Engine.
+    The main LED Animation Playback Engine with proper debugging
     """
     
     def __init__(self):
@@ -60,11 +59,19 @@ class AnimationEngine:
         self.state_callbacks: List[Callable] = []
         self._lock = threading.RLock()
         
+        self.stats.total_leds = EngineSettings.ANIMATION.led_count
+        self.stats.target_fps = EngineSettings.ANIMATION.target_fps
+        self.stats.master_brightness = self.master_brightness
+        self.stats.speed_percent = self.speed_percent
+        self.stats.dissolve_time = self.dissolve_time
+        
         self._setup_osc_handlers()
+        
+        logger.info(f"AnimationEngine initialized - LED count: {self.stats.total_leds}, Target FPS: {self.stats.target_fps}")
     
     def _setup_osc_handlers(self):
         """
-        Set up OSC message handlers.
+        Set up OSC message handlers
         """
         handlers = {
             "/load_json": self.handle_load_json,
@@ -83,7 +90,7 @@ class AnimationEngine:
     
     async def start(self):
         """
-        Start the engine.
+        Start the engine
         """
         try:
             logger.info("Starting Animation Engine...")
@@ -97,11 +104,25 @@ class AnimationEngine:
             logger.info("Initializing OSC Handler...")
             await self.osc_handler.start()
             
-            logger.info("Initializing Animation Loop...")
+            logger.info("Starting Animation Loop...")
             self._start_animation_loop()
             
             self.running = True
-            logger.info(f"Animation Engine started - Target FPS: {EngineSettings.ANIMATION.target_fps}")
+            logger.info(f"Animation Engine started successfully - Target FPS: {EngineSettings.ANIMATION.target_fps}")
+            
+            # Load default test scene if no scenes loaded
+            await asyncio.sleep(0.1)  # Give a moment for initialization
+            if not self.scene_manager.scenes:
+                logger.info("No scenes loaded, attempting to load test.json...")
+                try:
+                    success = self.scene_manager.load_scene_from_file("test.json")
+                    if not success:
+                        success = self.scene_manager.load_multiple_scenes_from_file("multiple_scenes.json")
+                    if success:
+                        logger.info("Test scenes loaded successfully")
+                        self._log_engine_status()
+                except Exception as e:
+                    logger.warning(f"Could not load test scenes: {e}")
             
         except Exception as e:
             logger.error(f"Error starting engine: {e}")
@@ -109,9 +130,23 @@ class AnimationEngine:
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
     
+    def _log_engine_status(self):
+        """
+        Log current engine status for debugging
+        """
+        scene_info = self.get_scene_info()
+        logger.info(f"=== ENGINE STATUS ===")
+        logger.info(f"Active Scene: {scene_info.get('scene_id')}")
+        logger.info(f"Current Effect: {scene_info.get('effect_id')}")
+        logger.info(f"Current Palette: {scene_info.get('palette_id')}")
+        logger.info(f"Total Effects: {scene_info.get('total_effects')}")
+        logger.info(f"Total Segments: {scene_info.get('total_segments')}")
+        logger.info(f"Master Brightness: {self.master_brightness}")
+        logger.info(f"Speed Percent: {self.speed_percent}%")
+    
     async def stop(self):
         """
-        Stop the engine.
+        Stop the engine
         """
         logger.info("Stopping Animation Engine...")
         
@@ -127,7 +162,7 @@ class AnimationEngine:
     
     def _start_animation_loop(self):
         """
-        Start the animation loop in a separate thread.
+        Start the animation loop in a separate thread
         """
         if self.animation_thread and self.animation_thread.is_alive():
             return
@@ -138,16 +173,17 @@ class AnimationEngine:
             name="AnimationLoop"
         )
         self.animation_thread.start()
+        logger.info("Animation loop thread started")
     
     def _animation_loop(self):
         """
-        Main animation loop - runs at 60 FPS.
+        Main animation loop - runs at target FPS
         """
         self.last_frame_time = time.time()
         frame_count = 0
         fps_calculation_time = self.last_frame_time
         
-        logger.info("Animation loop started.")
+        logger.info(f"Animation loop started - Target interval: {self.frame_interval:.3f}s")
         
         while self.running:
             frame_start = time.time()
@@ -160,17 +196,26 @@ class AnimationEngine:
                 
                 frame_count += 1
                 
+                # Calculate FPS every 60 frames (1 second at 60fps)
                 if frame_count % 60 == 0:
                     fps_time_diff = frame_start - fps_calculation_time
                     if fps_time_diff > 0:
-                        self.stats.actual_fps = 60.0 / fps_time_diff
-                    fps_calculation_time = frame_start
+                        actual_fps = 60.0 / fps_time_diff
+                        with self._lock:
+                            self.stats.actual_fps = actual_fps
+                        
+                        if frame_count % 300 == 0:  # Log every 5 seconds
+                            logger.info(f"Animation loop: Frame {frame_count}, FPS: {actual_fps:.1f}, Active LEDs: {self.stats.active_leds}")
                     
+                    fps_calculation_time = frame_start
                     self._update_stats()
                 
             except Exception as e:
                 logger.error(f"Error in animation loop: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
             
+            # Frame timing
             frame_time = time.time() - frame_start
             sleep_time = max(0, self.frame_interval - frame_time)
             
@@ -181,18 +226,28 @@ class AnimationEngine:
     
     def _update_frame(self, delta_time: float):
         """
-        Update one animation frame.
+        Update one animation frame
         """
         try:
             with self._lock:
                 speed_percent = self.speed_percent
                 master_brightness = self.master_brightness
+                
+                self.stats.frame_count += 1
+                self.stats.animation_time += delta_time
             
             adjusted_delta = delta_time * (speed_percent / 100.0)
-            
             self.scene_manager.update_animation(adjusted_delta)
             
             led_colors = self.scene_manager.get_led_output()
+            
+            active_leds = 0
+            for color in led_colors:
+                if len(color) >= 3 and any(c > 0 for c in color[:3]):
+                    active_leds += 1
+            
+            with self._lock:
+                self.stats.active_leds = active_leds
             
             if master_brightness < 255:
                 brightness_factor = master_brightness / 255.0
@@ -202,38 +257,32 @@ class AnimationEngine:
                 ]
             
             self.led_output.send_led_data(led_colors)
-            
-            with self._lock:
-                self.stats.frame_count += 1
-                self.stats.animation_time += adjusted_delta
                 
         except Exception as e:
             logger.error(f"Error in _update_frame: {e}")
     
     def _update_stats(self):
         """
-        Update engine statistics.
+        Update engine statistics
         """
-        self.stats.target_fps = EngineSettings.ANIMATION.target_fps
-        self.stats.total_leds = EngineSettings.ANIMATION.led_count
-        self.stats.master_brightness = self.master_brightness
-        self.stats.speed_percent = self.speed_percent
-        self.stats.dissolve_time = self.dissolve_time
-        
-        led_colors = self.scene_manager.get_led_output()
-        self.stats.active_leds = sum(1 for color in led_colors if any(c > 0 for c in color))
+        with self._lock:
+            self.stats.target_fps = EngineSettings.ANIMATION.target_fps
+            self.stats.total_leds = EngineSettings.ANIMATION.led_count
+            self.stats.master_brightness = self.master_brightness
+            self.stats.speed_percent = self.speed_percent
+            self.stats.dissolve_time = self.dissolve_time
         
         self._notify_state_change()
     
     def add_state_callback(self, callback: Callable):
         """
-        Add a callback for state changes.
+        Add a callback for state changes
         """
         self.state_callbacks.append(callback)
     
     def _notify_state_change(self):
         """
-        Notify that the state has changed.
+        Notify that the state has changed
         """
         for callback in self.state_callbacks:
             try:
@@ -243,19 +292,30 @@ class AnimationEngine:
     
     def get_stats(self) -> EngineStats:
         """
-        Get the current statistics.
+        Get the current statistics
         """
-        return self.stats
+        with self._lock:
+            stats_copy = EngineStats()
+            stats_copy.target_fps = self.stats.target_fps
+            stats_copy.actual_fps = self.stats.actual_fps
+            stats_copy.frame_count = self.stats.frame_count
+            stats_copy.active_leds = self.stats.active_leds
+            stats_copy.total_leds = self.stats.total_leds
+            stats_copy.animation_time = self.stats.animation_time
+            stats_copy.master_brightness = self.stats.master_brightness
+            stats_copy.speed_percent = self.stats.speed_percent
+            stats_copy.dissolve_time = self.stats.dissolve_time
+            return stats_copy
     
     def get_scene_info(self) -> Dict[str, Any]:
         """
-        Get the current scene information.
+        Get the current scene information
         """
         return self.scene_manager.get_current_scene_info()
     
     def handle_load_json(self, address: str, *args):
         """
-        Handle OSC message to load a JSON file.
+        Handle OSC message to load a JSON file
         """
         try:
             if not args or len(args) == 0:
@@ -263,6 +323,7 @@ class AnimationEngine:
                 return
             
             file_path = str(args[0])
+            logger.info(f"Loading JSON from: {file_path}")
             
             scene_id = 1
             if len(args) > 1:
@@ -271,7 +332,6 @@ class AnimationEngine:
                 except ValueError:
                     scene_id = 1
             
-            import time
             start_time = time.time()
             
             success = False
@@ -287,17 +347,17 @@ class AnimationEngine:
                     
                     if success:
                         self._notify_state_change()
+                        self._log_engine_status()
                         
                 load_time = time.time() - start_time
-                if load_time > 2.0:  
-                    logger.warning(f"Load JSON took {load_time:.3f}s")
+                logger.info(f"JSON load completed in {load_time:.3f}s")
                     
             except Exception as load_error:
                 logger.error(f"Error loading JSON scenes: {load_error}")
                 success = False
             
             if success:
-                logger.info(f"Scene loaded from: {file_path}")
+                logger.info(f"Scene loaded successfully from: {file_path}")
             else:
                 logger.error(f"Failed to load scene from: {file_path}")
                 
@@ -306,7 +366,7 @@ class AnimationEngine:
     
     def handle_change_scene(self, address: str, *args):
         """
-        Handle OSC message to change the scene.
+        Handle OSC message to change the scene
         """
         try:
             if not args or len(args) == 0:
@@ -320,6 +380,7 @@ class AnimationEngine:
                     success = self.scene_manager.switch_scene(scene_id)
                     if success:
                         self._notify_state_change()
+                        self._log_engine_status()
                 
                 if success:
                     logger.info(f"Scene changed to: {scene_id}")
@@ -334,7 +395,7 @@ class AnimationEngine:
     
     def handle_change_effect(self, address: str, *args):
         """
-        Handle OSC message to change the effect.
+        Handle OSC message to change the effect
         """
         try:
             if not args or len(args) == 0:
@@ -348,6 +409,7 @@ class AnimationEngine:
                     success = self.scene_manager.set_effect(effect_id)
                     if success:
                         self._notify_state_change()
+                        self._log_engine_status()
                 
                 if success:
                     logger.info(f"Effect changed to: {effect_id}")
@@ -362,7 +424,7 @@ class AnimationEngine:
     
     def handle_change_palette(self, address: str, *args):
         """
-        Handle OSC message to change the palette.
+        Handle OSC message to change the palette
         """
         try:
             if not args or len(args) == 0:
@@ -386,7 +448,7 @@ class AnimationEngine:
     
     def handle_palette_color(self, palette_id: str, color_id: int, rgb: List[int]):
         """
-        Handle OSC message to update a palette color.
+        Handle OSC message to update a palette color
         """
         try:
             with self._lock:
@@ -404,7 +466,7 @@ class AnimationEngine:
     
     def handle_set_dissolve_time(self, address: str, *args):
         """
-        Handle OSC message to set the dissolve time.
+        Handle OSC message to set the dissolve time
         """
         try:
             if not args or len(args) == 0:
@@ -426,7 +488,7 @@ class AnimationEngine:
     
     def handle_set_speed_percent(self, address: str, *args):
         """
-        Handle OSC message to set the speed percentage.
+        Handle OSC message to set the speed percentage
         """
         try:
             if not args or len(args) == 0:
@@ -448,7 +510,7 @@ class AnimationEngine:
     
     def handle_master_brightness(self, address: str, *args):
         """
-        Handle OSC message for master brightness.
+        Handle OSC message for master brightness
         """
         try:
             if not args or len(args) == 0:
@@ -470,7 +532,7 @@ class AnimationEngine:
     
     def get_led_colors(self) -> List[List[int]]:
         """
-        Get the current LED colors for display.
+        Get the current LED colors for display
         """
         led_colors = self.scene_manager.get_led_output()
         

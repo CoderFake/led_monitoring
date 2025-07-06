@@ -1,11 +1,11 @@
 """
-Logging system - Logging system for engine
+Logging system with headless and UI modes
 """
 
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 from logging.handlers import RotatingFileHandler
 import colorama
 from colorama import Fore, Back, Style
@@ -13,6 +13,47 @@ from colorama import Fore, Back, Style
 from config.settings import EngineSettings
 
 colorama.init()
+
+
+class LoggerMode:
+    """
+    Logger mode configuration
+    """
+    HEADLESS = "headless"
+    UI = "ui"
+    
+    _current_mode = HEADLESS
+    _ui_callback = None
+    
+    @classmethod
+    def set_mode(cls, mode: str, ui_callback: Optional[Callable] = None):
+        """
+        Set logger mode
+        """
+        cls._current_mode = mode
+        if mode == cls.UI and ui_callback:
+            cls._ui_callback = ui_callback
+    
+    @classmethod
+    def get_mode(cls) -> str:
+        """
+        Get current mode
+        """
+        return cls._current_mode
+    
+    @classmethod
+    def get_ui_callback(cls) -> Optional[Callable]:
+        """
+        Get UI callback
+        """
+        return cls._ui_callback
+    
+    @classmethod
+    def is_headless(cls) -> bool:
+        """
+        Check if headless mode
+        """
+        return cls._current_mode == cls.HEADLESS
 
 
 class ColoredFormatter(logging.Formatter):
@@ -35,9 +76,34 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 
+class UILogHandler(logging.Handler):
+    """
+    Handler for sending logs to UI
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.setLevel(logging.INFO)
+    
+    def emit(self, record):
+        """
+        Send log record to UI
+        """
+        try:
+            ui_callback = LoggerMode.get_ui_callback()
+            if ui_callback:
+                msg = self.format(record)
+                timestamp = self.formatter.formatTime(record, '%H:%M:%S') if self.formatter else ''
+                
+                ui_callback(record.levelname, msg, timestamp)
+                
+        except Exception:
+            pass
+
+
 def setup_logger(name: str) -> logging.Logger:
     """
-    Setup logger with configuration from settings
+    Setup logger with configuration from settings and current mode
     """
     logger = logging.getLogger(name)
     
@@ -47,7 +113,9 @@ def setup_logger(name: str) -> logging.Logger:
     level = getattr(logging, EngineSettings.LOGGING.level.upper(), logging.INFO)
     logger.setLevel(level)
     
-    if EngineSettings.LOGGING.console_output:
+    mode = LoggerMode.get_mode()
+    
+    if mode == LoggerMode.HEADLESS and EngineSettings.LOGGING.console_output:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         
@@ -59,6 +127,14 @@ def setup_logger(name: str) -> logging.Logger:
         logger.addHandler(console_handler)
         
         console_handler.flush = lambda: sys.stdout.flush()
+    
+    elif mode == LoggerMode.UI:
+        ui_handler = UILogHandler()
+        ui_handler.setLevel(level)
+        
+        ui_formatter = logging.Formatter('%(name)s: %(message)s')
+        ui_handler.setFormatter(ui_formatter)
+        logger.addHandler(ui_handler)
     
     if EngineSettings.LOGGING.file_output:
         log_dir = Path(EngineSettings.LOGGING.log_directory)
@@ -86,14 +162,28 @@ def setup_logger(name: str) -> logging.Logger:
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get logger that has been setup
+    Get configured logger
     """
     return logging.getLogger(name)
 
 
+def set_headless_mode():
+    """
+    Set logger to headless mode
+    """
+    LoggerMode.set_mode(LoggerMode.HEADLESS)
+
+
+def set_ui_mode(ui_callback: Callable):
+    """
+    Set logger to UI mode
+    """
+    LoggerMode.set_mode(LoggerMode.UI, ui_callback)
+
+
 class OSCLogger:
     """
-    Logger specialized for OSC messages
+    Specialized logger for OSC messages
     """
     
     def __init__(self):

@@ -1,5 +1,5 @@
 """
-Log Viewer - Component to view logs in realtime
+Log Viewer component for realtime log viewing with logger callback support
 """
 
 import flet as ft
@@ -9,6 +9,7 @@ from typing import List, Dict, Any
 from collections import deque
 
 from config.theme import ThemeColors, ThemeStyles
+from src.utils.logger import set_ui_mode
 
 
 class LogEntry:
@@ -21,36 +22,9 @@ class LogEntry:
         self.timestamp = timestamp
 
 
-class LogHandler(logging.Handler):
-    """
-    Custom log handler to capture logs
-    """
-    
-    def __init__(self, log_viewer):
-        super().__init__()
-        self.log_viewer = log_viewer
-        self.setLevel(logging.INFO)
-    
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            timestamp = self.formatter.formatTime(record, '%H:%M:%S')
-            
-            entry = LogEntry(
-                level=record.levelname,
-                message=msg,
-                timestamp=timestamp
-            )
-            
-            self.log_viewer.add_log_entry(entry)
-            
-        except Exception as e:
-            print(f"[LOG ERROR] {e}", flush=True)
-
-
 class LogViewer(ft.Container):
     """
-    Component to view logs in realtime
+    Component for realtime log viewing
     """
     
     def __init__(self):
@@ -71,21 +45,14 @@ class LogViewer(ft.Container):
         self.page = None
         self.needs_update = False
         
-        self._setup_log_handler()
         self._build_ui()
     
-    def _setup_log_handler(self):
+    def set_page(self, page):
         """
-        Setup log handler to capture logs
+        Set page reference for UI updates
         """
-        self.log_handler = LogHandler(self)
-        self.log_handler.setLevel(logging.INFO)
-        
-        formatter = logging.Formatter('%(name)s: %(message)s')
-        self.log_handler.setFormatter(formatter)
-        
-        root_logger = logging.getLogger()
-        root_logger.addHandler(self.log_handler)
+        self.page = page
+        set_ui_mode(self.add_log_from_logger)
         
         loggers_to_monitor = [
             'src.core.osc_handler',
@@ -98,12 +65,20 @@ class LogViewer(ft.Container):
         
         for logger_name in loggers_to_monitor:
             logger = logging.getLogger(logger_name)
-            logger.setLevel(logging.INFO)
-            logger.propagate = True 
+            logger.handlers.clear()
+            from src.utils.logger import setup_logger
+            setup_logger(logger_name)
+    
+    def add_log_from_logger(self, level: str, message: str, timestamp: str):
+        """
+        Callback to receive logs from logger
+        """
+        entry = LogEntry(level, message, timestamp)
+        self.add_log_entry(entry)
     
     def _build_ui(self):
         """
-        Build UI component 
+        Build UI component
         """
         title = ft.Text(
             "System Logs",
@@ -164,12 +139,6 @@ class LogViewer(ft.Container):
             self.log_entries.append(entry)
             self.needs_update = True
     
-    def set_page(self, page):
-        """
-        Set page reference to update UI
-        """
-        self.page = page
-    
     def _update_display_sync(self):
         """
         Update display synchronously
@@ -203,11 +172,9 @@ class LogViewer(ft.Container):
         except Exception as e:
             print(f"[LOG VIEWER UPDATE] Error: {e}", flush=True)
     
-
-    
     def _filter_logs(self) -> List[LogEntry]:
         """
-        Filter logs according to filter criteria
+        Filter logs based on filter criteria
         """
         filtered = []
         

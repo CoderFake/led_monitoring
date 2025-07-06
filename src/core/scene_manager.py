@@ -1,5 +1,5 @@
 """
-Scene Manager - Manages scenes and animations.
+Scene Manager - Fixed scene loading logic
 """
 
 import time
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 class SceneManager:
     """
-    Manages scene state and animations.
+    Manages scene state and animations with fixed loading
     """
     
     def __init__(self):
@@ -26,120 +26,37 @@ class SceneManager:
         self.last_update_time = time.time()
         
         self._lock = threading.RLock()
+        self._debug_frame_count = 0
     
     async def initialize(self):
         """
-        Initialize the scene manager.
+        Initialize the scene manager
         """
         logger.info("Initializing Scene Manager...")    
         logger.info("Scene Manager is ready - waiting for OSC signal to load scenes.")
     
-    def _load_default_scenes(self):
-        """
-        Load default scenes from data 
-        """
-        pass
-    
-    def _load_scenes_from_directory(self, scenes_dir: Path):
-        """
-        Load all scenes from a directory
-        """
-        pass
-    
-    def load_scene_from_new_format(self, file_path: str, scene_id: int = 1) -> bool:
-        """
-        Load a scene from a JSON file with the new format
-        """
-        try:
-            with self._lock:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                scene_data = {
-                    "scene_ID": scene_id,
-                    "current_effect_ID": 1,
-                    "current_palette": "A",
-                    "palettes": {
-                        "A": []
-                    },
-                    "effects": {}
-                }
-                
-                if "effects" in data:
-                    for i, effect_data in enumerate(data["effects"], 1):
-                        palette_colors = []
-                        for segment in effect_data.get("segments", []):
-                            if "color" in segment:
-                                palette_colors.append(segment["color"])
-                            elif "color_start" in segment:
-                                palette_colors.append(segment["color_start"])
-                            elif "color_end" in segment:
-                                palette_colors.append(segment["color_end"])
-                        
-                        if palette_colors:
-                            scene_data["palettes"]["A"] = palette_colors
-                        
-                        effect = {
-                            "effect_ID": i,
-                            "led_count": 225,
-                            "fps": 60,
-                            "time": 0.0,
-                            "current_palette": "A",
-                            "segments": {}
-                        }
-                        
-                        for j, segment_data in enumerate(effect_data.get("segments", []), 1):
-                            segment = {
-                                "segment_ID": j,
-                                "color": [0],
-                                "transparency": [1.0],
-                                "length": [segment_data.get("end", 224) - segment_data.get("start", 0)],
-                                "move_speed": 0.0,
-                                "move_range": [segment_data.get("start", 0), segment_data.get("end", 224)],
-                                "initial_position": segment_data.get("start", 0),
-                                "current_position": float(segment_data.get("start", 0)),
-                                "is_edge_reflect": False,
-                                "dimmer_time": [0, 100, 200, 100, 0],
-                                "dimmer_time_ratio": 1.0,
-                                "gradient": False,
-                                "fade": False,
-                                "gradient_colors": [0, -1, -1]
-                            }
-                            effect["segments"][str(j)] = segment
-                        
-                        scene_data["effects"][str(i)] = effect
-                
-                scene = Scene.from_dict(scene_data)
-                self.scenes[scene.scene_id] = scene
-                
-                if self.active_scene_id is None:
-                    self.active_scene_id = scene.scene_id
-                
-                logger.info(f"Loaded scene {scene.scene_id} from {file_path}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error loading scene from {file_path}: {e}")
-            return False
-    
-
     def load_scene_from_file(self, file_path: str) -> bool:
         """
-        Load a scene from a JSON file.
+        Load a scene from a JSON file - STANDARD FORMAT
         """
         try:
             with self._lock:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                scene = Scene.from_dict(data)
-                self.scenes[scene.scene_id] = scene
-                
-                if self.active_scene_id is None:
-                    self.active_scene_id = scene.scene_id
-                
-                logger.info(f"Loaded scene {scene.scene_id} from {file_path}")
-                return True
+                if "scene_ID" in data:
+                    scene = Scene.from_dict(data)
+                    self.scenes[scene.scene_id] = scene
+                    
+                    if self.active_scene_id is None:
+                        self.active_scene_id = scene.scene_id
+                    
+                    logger.info(f"Loaded scene {scene.scene_id} from {file_path} (standard format)")
+                    self._log_scene_debug_info()
+                    return True
+                else:
+                    logger.warning(f"File {file_path} does not contain scene_ID - not a standard scene format")
+                    return False
                 
         except Exception as e:
             logger.error(f"Error loading scene from {file_path}: {e}")
@@ -147,43 +64,118 @@ class SceneManager:
     
     def load_multiple_scenes_from_file(self, file_path: str) -> bool:
         """
-        Load multiple scenes from a JSON file.
+        Load multiple scenes from a JSON file - MULTIPLE SCENES FORMAT
         """
         try:
             with self._lock:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
+                if "scenes" not in data:
+                    logger.warning(f"File {file_path} does not contain 'scenes' array")
+                    return False
+                
                 scenes_data = data.get("scenes", [])
                 loaded_count = 0
                 
                 for scene_data in scenes_data:
-                    scene = Scene.from_dict(scene_data)
-                    self.scenes[scene.scene_id] = scene
-                    loaded_count += 1
-                    
-                    if self.active_scene_id is None:
-                        self.active_scene_id = scene.scene_id
+                    try:
+                        scene = Scene.from_dict(scene_data)
+                        self.scenes[scene.scene_id] = scene
+                        loaded_count += 1
+                        
+                        if self.active_scene_id is None:
+                            self.active_scene_id = scene.scene_id
+                            
+                    except Exception as e:
+                        logger.error(f"Error loading individual scene: {e}")
+                        continue
                 
-                logger.info(f"Loaded {loaded_count} scenes from {file_path}")
-                return True
+                if loaded_count > 0:
+                    logger.info(f"Loaded {loaded_count} scenes from {file_path} (multiple scenes format)")
+                    self._log_scene_debug_info()
+                    return True
+                else:
+                    logger.error(f"No valid scenes loaded from {file_path}")
+                    return False
                 
         except Exception as e:
             logger.error(f"Error loading multiple scenes from {file_path}: {e}")
             return False
     
+    def load_scene_from_new_format(self, file_path: str, scene_id: int = 1) -> bool:
+        """
+        Load scene from NEW FORMAT (effects array) - NOT USED FOR CURRENT JSON
+        """
+        logger.info(f"Attempting new format loading for {file_path} - this should NOT be used for current JSON files")
+        return False
+    
+    def _log_scene_debug_info(self):
+        """
+        Log debug information about loaded scenes
+        """
+        logger.info(f"=== SCENE DEBUG INFO ===")
+        logger.info(f"Total scenes loaded: {len(self.scenes)}")
+        logger.info(f"Available scene IDs: {list(self.scenes.keys())}")
+        logger.info(f"Active Scene ID: {self.active_scene_id}")
+        
+        if not self.active_scene_id or self.active_scene_id not in self.scenes:
+            logger.warning("No active scene or active scene not found!")
+            return
+            
+        scene = self.scenes[self.active_scene_id]
+        current_effect = scene.get_current_effect()
+        
+        logger.info(f"Scene {scene.scene_id}:")
+        logger.info(f"  - Effects: {len(scene.effects)} (IDs: {list(scene.effects.keys())})")
+        logger.info(f"  - Palettes: {len(scene.palettes)} (IDs: {list(scene.palettes.keys())})")
+        logger.info(f"  - Current Effect ID: {scene.current_effect_id}")
+        logger.info(f"  - Current Palette: {scene.current_palette}")
+        
+        if current_effect:
+            logger.info(f"Current Effect {current_effect.effect_id}:")
+            logger.info(f"  - LED Count: {current_effect.led_count}")
+            logger.info(f"  - FPS: {current_effect.fps}")
+            logger.info(f"  - Segments: {len(current_effect.segments)} (IDs: {list(current_effect.segments.keys())})")
+            
+            total_expected_leds = 0
+            for seg_id, segment in current_effect.segments.items():
+                total_length = sum(segment.length) if segment.length else 0
+                has_color = any(c > 0 for c in segment.color) if segment.color else False
+                expected_leds = total_length if has_color else 0
+                total_expected_leds += expected_leds
+                
+                logger.info(f"  Segment {seg_id}:")
+                logger.info(f"    - Length: {segment.length} (total: {total_length})")
+                logger.info(f"    - Position: {segment.current_position:.1f} (initial: {segment.initial_position})")
+                logger.info(f"    - Speed: {segment.move_speed}")
+                logger.info(f"    - Colors: {segment.color}")
+                logger.info(f"    - Expected LEDs: {expected_leds}")
+            
+            logger.info(f"  Total expected active LEDs: {total_expected_leds}")
+            
+            try:
+                led_output = scene.get_led_output()
+                actual_active = sum(1 for color in led_output if any(c > 0 for c in color))
+                logger.info(f"  Actual LED output: {len(led_output)} total, {actual_active} active")
+            except Exception as e:
+                logger.error(f"  Error getting LED output: {e}")
+        else:
+            logger.warning(f"  Current effect {scene.current_effect_id} not found!")
+    
     def switch_scene(self, scene_id: int) -> bool:
         """
-        Switch scenes.
+        Switch scenes
         """
         try:
             with self._lock:
                 if scene_id not in self.scenes:
-                    logger.warning(f"Scene {scene_id} does not exist.")
+                    logger.warning(f"Scene {scene_id} does not exist. Available: {list(self.scenes.keys())}")
                     return False
                 
                 self.active_scene_id = scene_id
                 logger.info(f"Switched to scene {scene_id}")
+                self._log_scene_debug_info()
                 return True
                 
         except Exception as e:
@@ -192,20 +184,22 @@ class SceneManager:
     
     def set_effect(self, effect_id: int) -> bool:
         """
-        Set the effect for the current scene.
+        Set the effect for the current scene
         """
         try:
             with self._lock:
                 if not self.active_scene_id or self.active_scene_id not in self.scenes:
+                    logger.warning("No active scene")
                     return False
                 
                 scene = self.scenes[self.active_scene_id]
                 if str(effect_id) not in scene.effects:
-                    logger.warning(f"Effect {effect_id} does not exist in scene {self.active_scene_id}")
+                    logger.warning(f"Effect {effect_id} does not exist in scene {self.active_scene_id}. Available: {list(scene.effects.keys())}")
                     return False
                 
                 scene.current_effect_id = effect_id
                 logger.info(f"Set effect {effect_id} for scene {self.active_scene_id}")
+                self._log_scene_debug_info()
                 return True
                 
         except Exception as e:
@@ -214,7 +208,7 @@ class SceneManager:
     
     def set_palette(self, palette_id: str) -> bool:
         """
-        Set the palette for the current scene.
+        Set the palette for the current scene
         """
         try:
             with self._lock:
@@ -223,7 +217,7 @@ class SceneManager:
                 
                 scene = self.scenes[self.active_scene_id]
                 if palette_id not in scene.palettes:
-                    logger.warning(f"Palette {palette_id} does not exist in scene {self.active_scene_id}")
+                    logger.warning(f"Palette {palette_id} does not exist in scene {self.active_scene_id}. Available: {list(scene.palettes.keys())}")
                     return False
                 
                 scene.current_palette = palette_id
@@ -236,7 +230,7 @@ class SceneManager:
     
     def update_palette_color(self, palette_id: str, color_id: int, rgb: List[int]) -> bool:
         """
-        Update a color in the palette.
+        Update a color in the palette
         """
         try:
             with self._lock:
@@ -259,26 +253,52 @@ class SceneManager:
     
     def update_animation(self, delta_time: float):
         """
-        Update the animation frame.
+        Update the animation frame
         """
         with self._lock:
+            self._debug_frame_count += 1
+            
+            if self._debug_frame_count % 600 == 0: 
+                self._log_animation_debug_info()
+            
             for scene in self.scenes.values():
                 for effect in scene.effects.values():
                     effect.update_animation(delta_time)
     
+    def _log_animation_debug_info(self):
+        """
+        Log animation debug information
+        """
+        if not self.active_scene_id or self.active_scene_id not in self.scenes:
+            return
+            
+        scene = self.scenes[self.active_scene_id]
+        current_effect = scene.get_current_effect()
+        
+        if current_effect:
+            led_output = self.get_led_output()
+            active_count = sum(1 for color in led_output if any(c > 0 for c in color))
+            
+            logger.info(f"Animation Frame {self._debug_frame_count}: Active LEDs = {active_count}/{len(led_output)}")
+            
+            for seg_id, segment in current_effect.segments.items():
+                logger.info(f"  Segment {seg_id}: pos={segment.current_position:.1f}, speed={segment.move_speed}")
+    
     def get_led_output(self) -> List[List[int]]:
         """
-        Get the LED output for the current scene.
+        Get the LED output for the current scene
         """
         with self._lock:
             if self.active_scene_id and self.active_scene_id in self.scenes:
-                return self.scenes[self.active_scene_id].get_led_output()
+                scene = self.scenes[self.active_scene_id]
+                output = scene.get_led_output()
+                return output
             
             return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
     
     def get_current_scene_info(self) -> Dict[str, Any]:
         """
-        Get information about the current scene.
+        Get information about the current scene
         """
         with self._lock:
             if not self.active_scene_id or self.active_scene_id not in self.scenes:
@@ -308,7 +328,7 @@ class SceneManager:
     
     def get_all_scenes_info(self) -> List[Dict[str, Any]]:
         """
-        Get information about all scenes.
+        Get information about all scenes
         """
         with self._lock:
             scenes_info = []

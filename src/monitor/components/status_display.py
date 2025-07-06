@@ -136,4 +136,10 @@ class StatusDisplay(ft.Container):
             self.speed_text.value = f"{stats.speed_percent}%"
             
         except Exception as e:
-            pass
+            # Fallback values if error
+            self.scene_text.value = "--"
+            self.effect_text.value = "--"
+            self.palette_text.value = "--"
+            self.fps_text.value = "0.0"
+            self.brightness_text.value = "255"
+            self.speed_text.value = "100%"
