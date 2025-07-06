@@ -180,11 +180,11 @@ class AnimationEngine:
     
     def _animation_loop(self):
         """
-        Main animation loop - runs at target FPS with proper stats tracking
+        Main animation loop - FIXED frame counting and FPS calculation
         """
         self.last_frame_time = time.time()
-        frame_count = 0
         fps_calculation_time = self.last_frame_time
+        fps_frame_count = 0
         
         logger.info(f"Animation loop started - Target interval: {self.frame_interval:.3f}s")
         
@@ -197,23 +197,23 @@ class AnimationEngine:
                 
                 self._update_frame(delta_time)
                 
-                frame_count += 1
-                
                 with self._lock:
-                    self.stats.frame_count = frame_count
+                    self.stats.frame_count += 1
                     self.stats.animation_time = time.time() - self.engine_start_time
                 
-                if frame_count % 60 == 0:
+                fps_frame_count += 1
+                
+                if fps_frame_count >= 60:
                     fps_time_diff = frame_start - fps_calculation_time
                     if fps_time_diff > 0:
-                        actual_fps = 60.0 / fps_time_diff
+                        actual_fps = fps_frame_count / fps_time_diff
                         with self._lock:
                             self.stats.actual_fps = actual_fps
                         
-                        if frame_count % 300 == 0: 
-                            logger.info(f"Animation loop: Frame {frame_count}, FPS: {actual_fps:.1f}, Active LEDs: {self.stats.active_leds}, Runtime: {self.stats.animation_time:.1f}s")
+                        logger.info(f"Animation loop: Frame {self.stats.frame_count}, FPS: {actual_fps:.1f}, Active LEDs: {self.stats.active_leds}, Runtime: {self.stats.animation_time:.1f}s")
                     
                     fps_calculation_time = frame_start
+                    fps_frame_count = 0
                     self._update_stats()
                 
             except Exception as e:
@@ -228,6 +228,27 @@ class AnimationEngine:
                 time.sleep(sleep_time)
         
         logger.info("Animation loop stopped.")
+    
+    def get_stats(self) -> EngineStats:
+        """
+        Get the current statistics
+        """
+        with self._lock:
+            stats_copy = EngineStats()
+            stats_copy.target_fps = self.stats.target_fps
+            stats_copy.actual_fps = self.stats.actual_fps
+            stats_copy.frame_count = self.stats.frame_count
+            
+            led_colors = self.scene_manager.get_led_output()
+            active_leds = sum(1 for color in led_colors if any(c > 0 for c in color[:3]))
+            stats_copy.active_leds = active_leds
+            stats_copy.total_leds = self.stats.total_leds
+            
+            stats_copy.animation_time = time.time() - self.engine_start_time
+            stats_copy.master_brightness = self.stats.master_brightness
+            stats_copy.speed_percent = self.stats.speed_percent
+            stats_copy.dissolve_time = self.stats.dissolve_time
+            return stats_copy
     
     def _update_frame(self, delta_time: float):
         """
@@ -291,25 +312,6 @@ class AnimationEngine:
                 callback()
             except Exception as e:
                 logger.error(f"Error in state callback: {e}")
-    
-    def get_stats(self) -> EngineStats:
-        """
-        Get the current statistics with real-time values
-        """
-        with self._lock:
-            stats_copy = EngineStats()
-            stats_copy.target_fps = self.stats.target_fps
-            stats_copy.actual_fps = self.stats.actual_fps
-            stats_copy.frame_count = self.stats.frame_count
-            stats_copy.active_leds = self.stats.active_leds
-            stats_copy.total_leds = self.stats.total_leds
-            
-            stats_copy.animation_time = time.time() - self.engine_start_time
-            
-            stats_copy.master_brightness = self.stats.master_brightness
-            stats_copy.speed_percent = self.stats.speed_percent
-            stats_copy.dissolve_time = self.stats.dissolve_time
-            return stats_copy
     
     def get_scene_info(self) -> Dict[str, Any]:
         """

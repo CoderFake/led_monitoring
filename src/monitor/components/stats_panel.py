@@ -1,5 +1,5 @@
 """
-Stats Panel - Component to display detailed statistics - Correct layout
+Stats Panel - Complete fix with correct data sources
 """
 
 import flet as ft
@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 class StatsPanel(ft.Container):
     """
-    Component to display detailed engine statistics
+    Component to display detailed engine statistics - FIXED VERSION
     """
     
     def __init__(self, engine):
@@ -21,15 +21,15 @@ class StatsPanel(ft.Container):
         self.led_count_text = ft.Text("225", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.PRIMARY, text_align=ft.TextAlign.CENTER)
         self.active_leds_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.SUCCESS, text_align=ft.TextAlign.CENTER)
         self.frame_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.INFO, text_align=ft.TextAlign.CENTER)
-        self.animation_time_text = ft.Text("0.0s", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.SECONDARY, text_align=ft.TextAlign.CENTER)
-        self.segments_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.WARNING, text_align=ft.TextAlign.CENTER)
-        self.effects_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.TEXT_PRIMARY, text_align=ft.TextAlign.CENTER)
+        self.scenes_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.SECONDARY, text_align=ft.TextAlign.CENTER)
+        self.effects_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.WARNING, text_align=ft.TextAlign.CENTER)
+        self.segments_count_text = ft.Text("0", size=18, weight=ft.FontWeight.BOLD, color=ThemeColors.TEXT_PRIMARY, text_align=ft.TextAlign.CENTER)
         
         self._build_ui()
     
     def _build_ui(self):
         """
-        Build UI component with 2x2 layout
+        Build UI component with correct 3x2 layout
         """
         title = ft.Text(
             "Performance Stats",
@@ -44,12 +44,12 @@ class StatsPanel(ft.Container):
             
             ft.Row([
                 self._create_stat_card("Frames", self.frame_count_text, ThemeColors.INFO),
-                self._create_stat_card("Runtime", self.animation_time_text, ThemeColors.SECONDARY)
+                self._create_stat_card("Scenes", self.scenes_count_text, ThemeColors.SECONDARY)
             ], spacing=12),
             
             ft.Row([
-                self._create_stat_card("Segments", self.segments_count_text, ThemeColors.WARNING),
-                self._create_stat_card("Effects", self.effects_count_text, ThemeColors.TEXT_PRIMARY)
+                self._create_stat_card("Effects", self.effects_count_text, ThemeColors.WARNING),
+                self._create_stat_card("Segments", self.segments_count_text, ThemeColors.TEXT_PRIMARY)
             ], spacing=12)
         ], spacing=12)
         
@@ -82,34 +82,46 @@ class StatsPanel(ft.Container):
     
     async def update(self):
         """
-        Update stats display 
+        Update stats display with CORRECT data sources
         """
         try:
             stats = self.engine.get_stats()
-            scene_info = self.engine.get_scene_info()
             
-            logger.info(f"[STATS DEBUG] Frame count: {stats.frame_count}, FPS: {stats.actual_fps:.1f}, Animation time: {stats.animation_time:.1f}s")
+            led_colors = self.engine.get_led_colors()
+            actual_active_leds = sum(1 for color in led_colors if any(c > 0 for c in color[:3]))
+            
+            total_scenes = len(self.engine.scene_manager.scenes)
+            
+            current_effects = 0
+            current_segments = 0
+            if self.engine.scene_manager.active_scene_id:
+                scene = self.engine.scene_manager.scenes.get(self.engine.scene_manager.active_scene_id)
+                if scene:
+                    current_effects = len(scene.effects)
+                    current_effect = scene.get_current_effect()
+                    if current_effect:
+                        current_segments = len(current_effect.segments)
             
             self.led_count_text.value = str(stats.total_leds)
-            self.active_leds_text.value = str(stats.active_leds)
-            
+            self.active_leds_text.value = str(actual_active_leds)
             self.frame_count_text.value = str(stats.frame_count)
-            self.animation_time_text.value = f"{stats.animation_time:.1f}s"
+            self.scenes_count_text.value = str(total_scenes)
+            self.effects_count_text.value = str(current_effects)
+            self.segments_count_text.value = str(current_segments)
             
-            self.segments_count_text.value = str(scene_info.get('total_segments', 0))
-            self.effects_count_text.value = str(scene_info.get('total_effects', 0))
-            
-            if stats.active_leds > 0:
+            if actual_active_leds > 0:
                 self.active_leds_text.color = ThemeColors.SUCCESS
             else:
                 self.active_leds_text.color = ThemeColors.TEXT_DISABLED
                 
+            logger.info(f"[STATS UPDATE] LEDs: {actual_active_leds}/{stats.total_leds}, Frames: {stats.frame_count}, Scenes: {total_scenes}, Effects: {current_effects}, Segments: {current_segments}")
+                
         except Exception as e:
             logger.error(f"Error updating stats panel: {e}")
             
-            self.led_count_text.value = "0"
-            self.active_leds_text.value = "0"
-            self.frame_count_text.value = "0"
-            self.animation_time_text.value = "0.0s"
-            self.segments_count_text.value = "0"
-            self.effects_count_text.value = "0"
+            self.led_count_text.value = "ERR"
+            self.active_leds_text.value = "ERR"
+            self.frame_count_text.value = "ERR"
+            self.scenes_count_text.value = "ERR"
+            self.effects_count_text.value = "ERR"
+            self.segments_count_text.value = "ERR"

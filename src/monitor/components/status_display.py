@@ -1,5 +1,5 @@
 """
-Status Display - Component to display engine status với FPS, Brightness, Speed
+Status Display - Debug version with detailed logging
 """
 
 import flet as ft
@@ -122,13 +122,16 @@ class StatusDisplay(ft.Container):
     
     async def update(self):
         """
-        Update status display
+        Update status display with DEBUG logging
         """
         try:
             stats = self.engine.get_stats()
             scene_info = self.engine.get_scene_info()
             
-            logger.info(f"[STATUS DEBUG] Stats: frame={stats.frame_count}, fps={stats.actual_fps:.1f}, time={stats.animation_time:.1f}s")
+            logger.info(f"[STATUS DEBUG] Scene Manager Info: {scene_info}")
+            logger.info(f"[STATUS DEBUG] Engine Stats: frame={stats.frame_count}, fps={stats.actual_fps:.1f}")
+            logger.info(f"[STATUS DEBUG] Active scene ID: {self.engine.scene_manager.active_scene_id}")
+            logger.info(f"[STATUS DEBUG] Available scenes: {list(self.engine.scene_manager.scenes.keys())}")
             
             self.scene_text.value = str(scene_info.get('scene_id', '--'))
             self.effect_text.value = str(scene_info.get('effect_id', '--'))
@@ -147,10 +150,12 @@ class StatusDisplay(ft.Container):
             
         except Exception as e:
             logger.error(f"Error updating status display: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             
-            self.scene_text.value = "--"
-            self.effect_text.value = "--"
-            self.palette_text.value = "--"
-            self.fps_text.value = "0.0"
-            self.brightness_text.value = "0"
-            self.speed_text.value = "0%"
+            self.scene_text.value = "ERR"
+            self.effect_text.value = "ERR"
+            self.palette_text.value = "ERR"
+            self.fps_text.value = "ERR"
+            self.brightness_text.value = "ERR"
+            self.speed_text.value = "ERR"

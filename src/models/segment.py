@@ -47,26 +47,74 @@ class Segment:
                 
     def get_led_colors(self, palette: List[List[int]]) -> List[List[int]]:
         """
-        Calculate the LED colors for this segment.
-        """
-        colors = []
-        total_length = sum(self.length)
+        Calculate the LED colors for this segment - CORRECT PATTERN
         
-        for i in range(total_length):
-            if i < len(self.color):
-                color_index = self.color[i]
+        Pattern: length[i] corresponds to color[i]
+        - length[0] LEDs first use color[0]
+        - length[1] LEDs next use color[1] 
+        - length[2] LEDs next use color[2]
+        - If color has more elements than length, add 1 LED for each extra color
+        """ 
+        colors = []
+        
+        if not self.color:
+            return colors
+        
+        current_led_index = 0
+        for part_index in range(len(self.length)):
+            part_length = self.length[part_index]
+            
+            if part_length <= 0:
+                continue
+                
+            color_index = self.color[part_index] if part_index < len(self.color) else 0
+            
+            transparency = 1.0
+            if part_index < len(self.transparency):
+                transparency = self.transparency[part_index]
+            
+            for led_in_part in range(part_length):
                 if 0 <= color_index < len(palette):
                     base_color = palette[color_index].copy()
                     
-                    if i < len(self.transparency):
-                        alpha = self.transparency[i]
-                        base_color = [int(c * alpha) for c in base_color]
+                    brightness = 1.0
+                    if self.fade:
+                        brightness = self.get_brightness_at_position(current_led_index)
                     
-                    colors.append(base_color)
+                    final_color = [
+                        int(c * transparency * brightness) 
+                        for c in base_color
+                    ]
+                    colors.append(final_color)
                 else:
                     colors.append([0, 0, 0])
-            else:
-                colors.append([0, 0, 0])
+                
+                current_led_index += 1
+        
+        if len(self.color) > len(self.length):
+            for extra_index in range(len(self.length), len(self.color)):
+                color_index = self.color[extra_index]
+                
+                transparency = 1.0
+                if extra_index < len(self.transparency):
+                    transparency = self.transparency[extra_index]
+                
+                if 0 <= color_index < len(palette):
+                    base_color = palette[color_index].copy()
+                    
+                    brightness = 1.0
+                    if self.fade:
+                        brightness = self.get_brightness_at_position(current_led_index)
+                    
+                    final_color = [
+                        int(c * transparency * brightness) 
+                        for c in base_color
+                    ]
+                    colors.append(final_color)
+                else:
+                    colors.append([0, 0, 0])
+                
+                current_led_index += 1
                 
         return colors
     
@@ -153,4 +201,4 @@ class Segment:
         """
         Check if the segment is active.
         """
-        return any(c > 0 for c in self.color) and self.move_speed != 0
+        return any(c > 0 for c in self.color) and sum(self.length) > 0
