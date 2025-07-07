@@ -119,7 +119,6 @@ class SceneManager:
                         continue
                 
                 if loaded_count > 0:
-                    logger.info(f"Loaded {loaded_count} scenes from {file_path}")
                     self._log_scene_debug_info()
                     self._notify_changes()
                     return True
@@ -343,7 +342,7 @@ class SceneManager:
         """
         Log debug information about loaded scenes
         """
-        logger.info(f"=== SCENE DEBUG INFO ===")
+        logger.info(f"=== SCENE INFORMATION ===")
         logger.info(f"Total scenes loaded: {len(self.scenes)}")
         logger.info(f"Available scene IDs: {list(self.scenes.keys())}")
         logger.info(f"Active Scene ID: {self.active_scene_id}")

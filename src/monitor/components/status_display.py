@@ -128,11 +128,6 @@ class StatusDisplay(ft.Container):
             stats = self.engine.get_stats()
             scene_info = self.engine.get_scene_info()
             
-            logger.info(f"[STATUS DEBUG] Scene Manager Info: {scene_info}")
-            logger.info(f"[STATUS DEBUG] Engine Stats: frame={stats.frame_count}, fps={stats.actual_fps:.1f}")
-            logger.info(f"[STATUS DEBUG] Active scene ID: {self.engine.scene_manager.active_scene_id}")
-            logger.info(f"[STATUS DEBUG] Available scenes: {list(self.engine.scene_manager.scenes.keys())}")
-            
             self.scene_text.value = str(scene_info.get('scene_id', '--'))
             self.effect_text.value = str(scene_info.get('effect_id', '--'))
             self.palette_text.value = str(scene_info.get('palette_id', '--'))

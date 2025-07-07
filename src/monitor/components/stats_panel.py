@@ -113,9 +113,7 @@ class StatsPanel(ft.Container):
                 self.active_leds_text.color = ThemeColors.SUCCESS
             else:
                 self.active_leds_text.color = ThemeColors.TEXT_DISABLED
-                
-            logger.info(f"[STATS UPDATE] LEDs: {actual_active_leds}/{stats.total_leds}, Frames: {stats.frame_count}, Scenes: {total_scenes}, Effects: {current_effects}, Segments: {current_segments}")
-                
+           
         except Exception as e:
             logger.error(f"Error updating stats panel: {e}")
             

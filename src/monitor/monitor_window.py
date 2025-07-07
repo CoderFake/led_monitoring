@@ -67,7 +67,7 @@ class MonitorWindow:
         page.update()
         
         self._start_update_loop()
-        logger.info("Monitor UI đã sẵn sàng")
+        logger.info("Monitor UI is ready") 
     
     def _create_components(self):
         """

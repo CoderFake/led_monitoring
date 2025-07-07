@@ -4,6 +4,7 @@ Logging system with headless and UI modes
 
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import Optional, Callable
 from logging.handlers import RotatingFileHandler
@@ -12,7 +13,7 @@ from colorama import Fore, Back, Style
 
 from config.settings import EngineSettings
 
-colorama.init()
+colorama.init(autoreset=True)
 
 
 class LoggerMode:
@@ -71,8 +72,9 @@ class ColoredFormatter(logging.Formatter):
     
     def format(self, record):
         log_color = self.COLORS.get(record.levelname, '')
-        record.levelname = f"{log_color}{record.levelname}{Style.RESET_ALL}"
-        record.name = f"{Fore.BLUE}{record.name}{Style.RESET_ALL}"
+        if LoggerMode.is_headless():
+            record.levelname = f"{log_color}{record.levelname}{Style.RESET_ALL}"
+            record.name = f"{Fore.BLUE}{record.name}{Style.RESET_ALL}"
         return super().format(record)
 
 
@@ -91,19 +93,17 @@ class UILogHandler(logging.Handler):
         """
         try:
             ui_callback = LoggerMode.get_ui_callback()
-            if ui_callback:
+            if ui_callback and not LoggerMode.is_headless():
                 msg = self.format(record)
                 timestamp = self.formatter.formatTime(record, '%H:%M:%S') if self.formatter else ''
-                
                 ui_callback(record.levelname, msg, timestamp)
-                
         except Exception:
             pass
 
 
 def setup_logger(name: str) -> logging.Logger:
     """
-    Setup logger with configuration from settings and current mode
+    Setup logger with configuration
     """
     logger = logging.getLogger(name)
     
@@ -115,7 +115,7 @@ def setup_logger(name: str) -> logging.Logger:
     
     mode = LoggerMode.get_mode()
     
-    if mode == LoggerMode.HEADLESS and EngineSettings.LOGGING.console_output:
+    if mode == LoggerMode.HEADLESS:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
         
@@ -126,8 +126,13 @@ def setup_logger(name: str) -> logging.Logger:
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
         
-        console_handler.flush = lambda: sys.stdout.flush()
-    
+        def flush_stdout():
+            try:
+                sys.stdout.flush()
+            except:
+                pass
+        console_handler.flush = flush_stdout
+        
     elif mode == LoggerMode.UI:
         ui_handler = UILogHandler()
         ui_handler.setLevel(level)
@@ -137,26 +142,29 @@ def setup_logger(name: str) -> logging.Logger:
         logger.addHandler(ui_handler)
     
     if EngineSettings.LOGGING.file_output:
-        log_dir = Path(EngineSettings.LOGGING.log_directory)
-        log_dir.mkdir(exist_ok=True)
-        
-        log_file = log_dir / "led_engine.log"
-        
-        file_handler = RotatingFileHandler(
-            log_file,
-            maxBytes=10*1024*1024,
-            backupCount=EngineSettings.LOGGING.max_log_files
-        )
-        file_handler.setLevel(level)
-        
-        file_formatter = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
+        try:
+            log_dir = Path(EngineSettings.LOGGING.log_directory)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            log_file = log_dir / "led_engine.log"
+            
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=10*1024*1024,
+                backupCount=EngineSettings.LOGGING.max_log_files
+            )
+            file_handler.setLevel(level)
+            
+            file_formatter = logging.Formatter(
+                '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
+        except Exception as e:
+            print(f"Warning: Could not setup file logging: {e}", file=sys.stderr)
     
-    logger.propagate = (name != "root")
+    logger.propagate = False
     return logger
 
 
@@ -164,7 +172,7 @@ def get_logger(name: str) -> logging.Logger:
     """
     Get configured logger
     """
-    return logging.getLogger(name)
+    return setup_logger(name)
 
 
 def set_headless_mode():
@@ -183,7 +191,7 @@ def set_ui_mode(ui_callback: Callable):
 
 class OSCLogger:
     """
-    Specialized logger for OSC messages
+    Specialized logger for OSC messages with immediate output
     """
     
     def __init__(self):
@@ -192,17 +200,25 @@ class OSCLogger:
     
     def log_message(self, address: str, args: tuple):
         """
-        Log OSC message with standard format
+        Log OSC message with immediate flush
         """
         self.message_count += 1
         args_str = ' '.join(str(arg) for arg in args) if args else ''
-        self.logger.info(f"{address} {args_str}")
+        msg = f"OSC {address} {args_str}"
+        
+        if LoggerMode.is_headless():
+            print(msg, flush=True)
+        else:
+            self.logger.info(msg)
     
     def log_error(self, message: str):
         """
-        Log OSC error
+        Log OSC error with immediate output
         """
-        self.logger.error(message)
+        if LoggerMode.is_headless():
+            print(f"OSC ERROR: {message}", flush=True)
+        else:
+            self.logger.error(message)
     
     def get_stats(self) -> dict:
         """
