@@ -95,14 +95,14 @@ class LogViewer(ft.Container):
                     ft.dropdown.Option("WARNING"),
                     ft.dropdown.Option("ERROR")
                 ],
-                width=120,
+                width=180,
                 on_change=self._on_filter_change,
                 **ThemeStyles.text_field_style()
             ),
             ft.TextField(
                 label="Filter",
                 hint_text="Search logs...",
-                width=200,
+                width=400,
                 on_change=self._on_search_change,
                 **ThemeStyles.text_field_style()
             ),

@@ -1,5 +1,5 @@
 """
-LED Animation Playback Engine
+LED Animation Playback Engine - Fixed version
 """
 
 import asyncio
@@ -115,24 +115,14 @@ class AnimationEngine:
             logger.info(f"Animation Engine started successfully - Target FPS: {EngineSettings.ANIMATION.target_fps}")
             
             await asyncio.sleep(0.1)
-            if not self.scene_manager.scenes:
-                logger.info("No scenes loaded, attempting to load test.json...")
-                try:
-                    success = self.scene_manager.load_scene_from_file("test.json")
-                    if not success:
-                        success = self.scene_manager.load_multiple_scenes_from_file("multiple_scenes.json")
-                    if success:
-                        logger.info("Test scenes loaded successfully")
-                        self._log_engine_status()
-                except Exception as e:
-                    logger.warning(f"Could not load test scenes: {e}")
+            logger.info("Engine ready - waiting for OSC commands to load scenes")
             
         except Exception as e:
             logger.error(f"Error starting engine: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
-    
+
     def _log_engine_status(self):
         """
         Log current engine status for debugging
@@ -317,11 +307,11 @@ class AnimationEngine:
         """
         Get the current scene information
         """
-        return self.scene_manager.get_current_scene_info()
+        return self.scene_manager.get_current_scene_info()    
     
     def handle_load_json(self, address: str, *args):
         """
-        Handle OSC message to load a JSON file
+        Handle OSC message to load a JSON file - FIXED VERSION
         """
         try:
             if not args or len(args) == 0:
@@ -337,23 +327,21 @@ class AnimationEngine:
                 with self._lock:
                     if "multiple" in file_path.lower() or "scenes" in file_path.lower():
                         success = self.scene_manager.load_multiple_scenes_from_file(file_path)
-                        
-                    if not success:
+                    else:
                         success = self.scene_manager.load_scene_from_file(file_path)
                         
                     if not success:
                         success = self.scene_manager.load_multiple_scenes_from_file(file_path)
                         
-                    if success:
-                        self._notify_state_change()
-                        self._log_engine_status()
+                if success:
+                    self._notify_state_change()
+                    self._log_engine_status()
+                    logger.info(f"Successfully loaded scenes from: {file_path}")
+                else:
+                    logger.error(f"Failed to load scene from: {file_path}")
                         
             except Exception as load_error:
                 logger.error(f"Error loading JSON scenes: {load_error}")
-                success = False
-            
-            else:
-                logger.error(f"Failed to load scene from: {file_path}")
                 
         except Exception as e:
             logger.error(f"Error in handle_load_json: {e}")
