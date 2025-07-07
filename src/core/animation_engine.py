@@ -88,7 +88,8 @@ class AnimationEngine:
             "/change_palette": self.handle_change_palette,
             "/set_dissolve_time": self.handle_set_dissolve_time,
             "/set_speed_percent": self.handle_set_speed_percent,
-            "/master_brightness": self.handle_master_brightness
+            "/master_brightness": self.handle_master_brightness,
+            "/pattern_transition": self.handle_pattern_transition_config
         }
         
         for address, handler in handlers.items():
@@ -513,6 +514,31 @@ class AnimationEngine:
                 
         except Exception as e:
             logger.error(f"Error in handle_master_brightness: {e}")
+    
+    def handle_pattern_transition_config(self, address: str, *args):
+        try:
+            if len(args) < 3:
+                logger.warning("Missing pattern transition config arguments. Expected: fade_in_ms fade_out_ms waiting_ms")
+                return
+            
+            try:
+                fade_in_ms = int(args[0])
+                fade_out_ms = int(args[1])
+                waiting_ms = int(args[2])
+                
+                self.scene_manager.set_transition_config(
+                    fade_in_ms=fade_in_ms,
+                    fade_out_ms=fade_out_ms,
+                    waiting_ms=waiting_ms
+                )
+                
+                logger.info(f"Pattern transition config updated: fade_in={fade_in_ms}ms, fade_out={fade_out_ms}ms, waiting={waiting_ms}ms")
+                
+            except ValueError:
+                logger.error(f"Invalid pattern transition config values: {args}")
+                
+        except Exception as e:
+            logger.error(f"Error in handle_pattern_transition_config: {e}")
     
     def get_led_colors(self) -> List[List[int]]:
         """

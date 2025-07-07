@@ -1,12 +1,10 @@
-"""
-Scene Manager - Fixed scene loading logic - Complete version
-"""
-
 import time
 import threading
 import json
 from typing import Dict, List, Optional, Any
 from pathlib import Path
+from dataclasses import dataclass
+from enum import Enum
 
 from src.models.scene import Scene
 from config.settings import EngineSettings
@@ -15,11 +13,40 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class SceneManager:
-    """
-    Manages scene state and animations with fixed loading logic
-    """
+class TransitionPhase(Enum):
+    FADE_OUT = "fade_out"
+    WAITING = "waiting" 
+    FADE_IN = "fade_in"
+    COMPLETED = "completed"
+
+
+@dataclass
+class PatternTransitionConfig:
+    fade_in_ms: int = 100
+    fade_out_ms: int = 100
+    waiting_ms: int = 50
+
+
+@dataclass  
+class PatternTransition:
+    is_active: bool = False
+    phase: TransitionPhase = TransitionPhase.COMPLETED
     
+    from_effect_id: int = None
+    from_palette_id: str = None
+    to_effect_id: int = None
+    to_palette_id: str = None
+    
+    start_time: float = 0.0
+    fade_in_ms: int = 100
+    fade_out_ms: int = 100
+    waiting_ms: int = 50
+    
+    phase_start_time: float = 0.0
+    progress: float = 0.0
+
+
+class SceneManager:
     def __init__(self):
         self.scenes: Dict[int, Scene] = {}
         self.active_scene_id: Optional[int] = None
@@ -28,35 +55,153 @@ class SceneManager:
         self._lock = threading.RLock()
         self._debug_frame_count = 0
         self._change_callbacks: List[callable] = []
+        
+        self.pattern_transition = PatternTransition()
+        self.transition_config = PatternTransitionConfig(
+            fade_in_ms=EngineSettings.PATTERN_TRANSITION.default_fade_in_ms,
+            fade_out_ms=EngineSettings.PATTERN_TRANSITION.default_fade_out_ms,
+            waiting_ms=EngineSettings.PATTERN_TRANSITION.default_waiting_ms
+        )
     
     async def initialize(self):
-        """
-        Initialize the scene manager
-        """
         logger.info("Initializing Scene Manager...")    
         logger.info("Scene Manager is ready - waiting for OSC signal to load scenes.")
     
     def add_change_callback(self, callback: callable):
-        """
-        Register callback for scene state changes
-        """
         with self._lock:
             self._change_callbacks.append(callback)
             
     def _notify_changes(self):
-        """
-        Notify all registered callbacks of state changes
-        """
         for callback in self._change_callbacks:
             try:
                 callback()
             except Exception as e:
                 logger.error(f"Error in change callback: {e}")
     
+    def set_transition_config(self, fade_in_ms: int = None, fade_out_ms: int = None, waiting_ms: int = None):
+        with self._lock:
+            if fade_in_ms is not None:
+                self.transition_config.fade_in_ms = max(0, fade_in_ms)
+            if fade_out_ms is not None:
+                self.transition_config.fade_out_ms = max(0, fade_out_ms)
+            if waiting_ms is not None:
+                self.transition_config.waiting_ms = max(0, waiting_ms)
+        
+        logger.info(f"Pattern transition config updated: fade_in={self.transition_config.fade_in_ms}ms, fade_out={self.transition_config.fade_out_ms}ms, waiting={self.transition_config.waiting_ms}ms")
+    
+    def start_pattern_transition(self, to_effect_id: int = None, to_palette_id: str = None):
+        with self._lock:
+            if not self.active_scene_id or self.active_scene_id not in self.scenes:
+                return False
+            
+            current_scene = self.scenes[self.active_scene_id]
+            
+            self.pattern_transition.is_active = True
+            self.pattern_transition.phase = TransitionPhase.FADE_OUT
+            
+            self.pattern_transition.from_effect_id = current_scene.current_effect_id
+            self.pattern_transition.from_palette_id = current_scene.current_palette
+            self.pattern_transition.to_effect_id = to_effect_id or current_scene.current_effect_id
+            self.pattern_transition.to_palette_id = to_palette_id or current_scene.current_palette
+            
+            self.pattern_transition.fade_in_ms = self.transition_config.fade_in_ms
+            self.pattern_transition.fade_out_ms = self.transition_config.fade_out_ms
+            self.pattern_transition.waiting_ms = self.transition_config.waiting_ms
+            
+            self.pattern_transition.start_time = time.time()
+            self.pattern_transition.phase_start_time = time.time()
+            self.pattern_transition.progress = 0.0
+            
+            logger.info(f"Pattern transition started: Effect {self.pattern_transition.from_effect_id} → {self.pattern_transition.to_effect_id}, Palette {self.pattern_transition.from_palette_id} → {self.pattern_transition.to_palette_id}")
+            return True
+    
+    def _update_pattern_transition(self, current_time: float):
+        if not self.pattern_transition.is_active:
+            return
+            
+        phase_elapsed = (current_time - self.pattern_transition.phase_start_time) * 1000
+        
+        if self.pattern_transition.phase == TransitionPhase.FADE_OUT:
+            if phase_elapsed >= self.pattern_transition.fade_out_ms:
+                self.pattern_transition.phase = TransitionPhase.WAITING
+                self.pattern_transition.phase_start_time = current_time
+                logger.debug("Transition phase: FADE_OUT → WAITING")
+            else:
+                self.pattern_transition.progress = 1.0 - (phase_elapsed / self.pattern_transition.fade_out_ms)
+        
+        elif self.pattern_transition.phase == TransitionPhase.WAITING:
+            if phase_elapsed >= self.pattern_transition.waiting_ms:
+                self.pattern_transition.phase = TransitionPhase.FADE_IN
+                self.pattern_transition.phase_start_time = current_time
+                logger.debug("Transition phase: WAITING → FADE_IN")
+            else:
+                self.pattern_transition.progress = 0.0
+        
+        elif self.pattern_transition.phase == TransitionPhase.FADE_IN:
+            if phase_elapsed >= self.pattern_transition.fade_in_ms:
+                self._complete_pattern_transition()
+            else:
+                self.pattern_transition.progress = phase_elapsed / self.pattern_transition.fade_in_ms
+    
+    def _complete_pattern_transition(self):
+        if not self.active_scene_id or self.active_scene_id not in self.scenes:
+            return
+            
+        scene = self.scenes[self.active_scene_id]
+        scene.current_effect_id = self.pattern_transition.to_effect_id
+        scene.current_palette = self.pattern_transition.to_palette_id
+        
+        self.pattern_transition.is_active = False
+        self.pattern_transition.phase = TransitionPhase.COMPLETED
+        
+        logger.info(f"Pattern transition completed: Effect {self.pattern_transition.to_effect_id}, Palette {self.pattern_transition.to_palette_id}")
+        self._notify_changes()
+    
+    def get_led_output(self) -> List[List[int]]:
+        with self._lock:
+            if not self.pattern_transition.is_active:
+                if self.active_scene_id and self.active_scene_id in self.scenes:
+                    scene = self.scenes[self.active_scene_id]
+                    output = scene.get_led_output()
+                    return output
+                return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
+            
+            return self._get_transition_led_output()
+    
+    def _get_transition_led_output(self) -> List[List[int]]:
+        if not self.active_scene_id or self.active_scene_id not in self.scenes:
+            return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
+        
+        scene = self.scenes[self.active_scene_id]
+        
+        if self.pattern_transition.phase == TransitionPhase.FADE_OUT:
+            scene.current_effect_id = self.pattern_transition.from_effect_id
+            scene.current_palette = self.pattern_transition.from_palette_id
+            output = scene.get_led_output()
+            
+            brightness = self.pattern_transition.progress
+            return [
+                [int(color[0] * brightness), int(color[1] * brightness), int(color[2] * brightness)]
+                for color in output
+            ]
+        
+        elif self.pattern_transition.phase == TransitionPhase.WAITING:
+            return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
+        
+        elif self.pattern_transition.phase == TransitionPhase.FADE_IN:
+            scene.current_effect_id = self.pattern_transition.to_effect_id
+            scene.current_palette = self.pattern_transition.to_palette_id
+            output = scene.get_led_output()
+            
+            brightness = self.pattern_transition.progress
+            return [
+                [int(color[0] * brightness), int(color[1] * brightness), int(color[2] * brightness)]
+                for color in output
+            ]
+        
+        return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
+    
     def load_scene_from_file(self, file_path: str) -> bool:
-        """
-        Load a scene from a JSON file - STANDARD SINGLE SCENE FORMAT
-        """
         try:
             with self._lock:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -82,9 +227,6 @@ class SceneManager:
             return False
     
     def load_multiple_scenes_from_file(self, file_path: str) -> bool:
-        """
-        Load multiple scenes from a JSON file - MULTIPLE SCENES FORMAT
-        """
         try:
             with self._lock:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -131,9 +273,6 @@ class SceneManager:
             return False
     
     def load_scene(self, scene_data: Dict[str, Any]) -> bool:
-        """
-        Load scene from dictionary data
-        """
         try:
             with self._lock:
                 scene = Scene.from_dict(scene_data)
@@ -151,9 +290,6 @@ class SceneManager:
             return False
     
     def switch_scene(self, scene_id: int, fade_params: List[int] = None) -> bool:
-        """
-        Switch to different scene with optional fade parameters
-        """
         try:
             with self._lock:
                 if scene_id not in self.scenes:
@@ -175,9 +311,6 @@ class SceneManager:
             return False
     
     def set_effect_palette(self, scene_id: int, effect_id: int, palette_id: str) -> bool:
-        """
-        Set effect and palette for specified scene
-        """
         try:
             with self._lock:
                 if scene_id not in self.scenes:
@@ -196,9 +329,6 @@ class SceneManager:
             return False
     
     def set_effect(self, effect_id: int) -> bool:
-        """
-        Set the effect for the current scene
-        """
         try:
             with self._lock:
                 if not self.active_scene_id or self.active_scene_id not in self.scenes:
@@ -210,20 +340,20 @@ class SceneManager:
                     logger.warning(f"Effect {effect_id} does not exist in scene {self.active_scene_id}. Available: {list(scene.effects.keys())}")
                     return False
                 
-                scene.current_effect_id = effect_id
-                logger.info(f"Set effect {effect_id} for scene {self.active_scene_id}")
-                self._log_scene_debug_info()
-                self._notify_changes()
-                return True
+                if EngineSettings.PATTERN_TRANSITION.enabled:
+                    return self.start_pattern_transition(to_effect_id=effect_id)
+                else:
+                    scene.current_effect_id = effect_id
+                    logger.info(f"Set effect {effect_id} for scene {self.active_scene_id}")
+                    self._log_scene_debug_info()
+                    self._notify_changes()
+                    return True
                 
         except Exception as e:
             logger.error(f"Error setting effect: {e}")
             return False
     
     def set_palette(self, palette_id: str) -> bool:
-        """
-        Set the palette for the current scene
-        """
         try:
             with self._lock:
                 if not self.active_scene_id or self.active_scene_id not in self.scenes:
@@ -234,19 +364,19 @@ class SceneManager:
                     logger.warning(f"Palette {palette_id} does not exist in scene {self.active_scene_id}. Available: {list(scene.palettes.keys())}")
                     return False
                 
-                scene.current_palette = palette_id
-                logger.info(f"Set palette {palette_id} for scene {self.active_scene_id}")
-                self._notify_changes()
-                return True
+                if EngineSettings.PATTERN_TRANSITION.enabled:
+                    return self.start_pattern_transition(to_palette_id=palette_id)
+                else:
+                    scene.current_palette = palette_id
+                    logger.info(f"Set palette {palette_id} for scene {self.active_scene_id}")
+                    self._notify_changes()
+                    return True
                 
         except Exception as e:
             logger.error(f"Error setting palette: {e}")
             return False
     
     def set_move_speed(self, scene_id: int, speed: float) -> bool:
-        """
-        Set movement speed for all segments in scene
-        """
         try:
             with self._lock:
                 if scene_id not in self.scenes:
@@ -269,9 +399,6 @@ class SceneManager:
             return False
     
     def update_palette_color(self, palette_id: str, color_id: int, rgb: List[int]) -> bool:
-        """
-        Update a color in the palette
-        """
         try:
             with self._lock:
                 if not self.active_scene_id or self.active_scene_id not in self.scenes:
@@ -293,9 +420,6 @@ class SceneManager:
             return False
     
     def update_animation_frame(self):
-        """
-        Update animation frame for all scenes
-        """
         current_time = time.time()
         delta_time = current_time - self.last_update_time
         self.last_update_time = current_time
@@ -306,10 +430,11 @@ class SceneManager:
                     effect.update_animation(delta_time)
     
     def update_animation(self, delta_time: float):
-        """
-        Update the animation frame with delta time
-        """
         with self._lock:
+            current_time = time.time()
+            
+            self._update_pattern_transition(current_time)
+            
             self._debug_frame_count += 1
             
             if self._debug_frame_count % 600 == 0: 
@@ -320,9 +445,6 @@ class SceneManager:
                     effect.update_animation(delta_time)
     
     def _log_animation_debug_info(self):
-        """
-        Log animation debug information
-        """
         if not self.active_scene_id or self.active_scene_id not in self.scenes:
             return
             
@@ -335,13 +457,13 @@ class SceneManager:
             
             logger.info(f"Animation Frame {self._debug_frame_count}: Active LEDs = {active_count}/{len(led_output)}")
             
+            if self.pattern_transition.is_active:
+                logger.info(f"Pattern Transition: {self.pattern_transition.phase.value}, Progress: {self.pattern_transition.progress:.2f}")
+            
             for seg_id, segment in current_effect.segments.items():
                 logger.info(f"  Segment {seg_id}: pos={segment.current_position:.1f}, speed={segment.move_speed}")
     
     def _log_scene_debug_info(self):
-        """
-        Log debug information about loaded scenes
-        """
         logger.info(f"=== SCENE INFORMATION ===")
         logger.info(f"Total scenes loaded: {len(self.scenes)}")
         logger.info(f"Available scene IDs: {list(self.scenes.keys())}")
@@ -391,22 +513,7 @@ class SceneManager:
         else:
             logger.warning(f"  Current effect {scene.current_effect_id} not found!")
     
-    def get_led_output(self) -> List[List[int]]:
-        """
-        Get LED output for currently active scene
-        """
-        with self._lock:
-            if self.active_scene_id and self.active_scene_id in self.scenes:
-                scene = self.scenes[self.active_scene_id]
-                output = scene.get_led_output()
-                return output
-            
-            return [[0, 0, 0] for _ in range(EngineSettings.ANIMATION.led_count)]
-    
     def get_scene_stats(self) -> Dict[str, Any]:
-        """
-        Get statistics about current scenes
-        """
         with self._lock:
             stats = {
                 "total_scenes": len(self.scenes),
@@ -415,7 +522,9 @@ class SceneManager:
                 "total_segments": 0,
                 "current_palette": None,
                 "current_fps": EngineSettings.ANIMATION.target_fps,
-                "available_scenes": list(self.scenes.keys())
+                "available_scenes": list(self.scenes.keys()),
+                "pattern_transition_active": self.pattern_transition.is_active,
+                "transition_phase": self.pattern_transition.phase.value if self.pattern_transition.is_active else None
             }
             
             if self.active_scene_id and self.active_scene_id in self.scenes:
@@ -430,9 +539,6 @@ class SceneManager:
             return stats
     
     def get_current_scene_info(self) -> Dict[str, Any]:
-        """
-        Get information about the current scene
-        """
         with self._lock:
             if not self.active_scene_id or self.active_scene_id not in self.scenes:
                 return {
@@ -460,9 +566,6 @@ class SceneManager:
             }
     
     def get_all_scenes(self) -> Dict[int, str]:
-        """
-        Get all available scenes with their IDs
-        """
         with self._lock:
             scenes_info = {}
             for scene_id, scene in self.scenes.items():
@@ -470,9 +573,6 @@ class SceneManager:
             return scenes_info
     
     def get_all_segments_data(self) -> List[Dict[str, Any]]:
-        """
-        Get data of all segments in active scene for UI display
-        """
         with self._lock:
             segments_data = []
             

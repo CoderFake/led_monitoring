@@ -19,7 +19,7 @@ class OSCConfig(BaseModel):
 
 class AnimationConfig(BaseModel):
     """
-    Animation configuration với LED destinations
+    Animation configuration
     """
     target_fps: int = 60
     led_count: int = 225
@@ -29,6 +29,16 @@ class AnimationConfig(BaseModel):
     led_destinations: List[Dict[str, Any]] = [
         {"ip": "192.168.11.105", "port": 7000},
     ]
+
+
+class PatternTransitionConfig(BaseModel):
+    """
+    Pattern transition configuration
+    """
+    default_fade_in_ms: int = 100
+    default_fade_out_ms: int = 100
+    default_waiting_ms: int = 50
+    enabled: bool = True
 
 
 class MonitorConfig(BaseModel):
@@ -58,9 +68,9 @@ class EngineSettings:
     """
     Main engine configuration
     """
-    
     OSC = OSCConfig()
     ANIMATION = AnimationConfig()
+    PATTERN_TRANSITION = PatternTransitionConfig()
     MONITOR = MonitorConfig()
     LOGGING = LoggingConfig()
     
